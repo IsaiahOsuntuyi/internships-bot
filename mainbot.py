@@ -3,12 +3,12 @@ import os
 import time
 from datetime import datetime
 import git
-import schedule
 import discord
 from discord.ext import tasks, commands
 import asyncio
 from dotenv import load_dotenv
 import sys
+import traceback
 
 # Load environment variables
 load_dotenv()
@@ -342,6 +342,24 @@ def check_for_new_roles():
     if not new_roles and not deactivated_roles:
         print("No updates found.")
 
+@tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
+async def check_roles_task():
+    """
+    Periodic task that runs check_for_new_roles on the configured interval.
+    Exceptions are caught and logged so a single failed check (network error,
+    bad JSON, git failure, etc.) never stops the loop.
+    """
+    try:
+        check_for_new_roles()
+    except Exception as e:
+        print(f"Error during scheduled role check: {e}")
+        traceback.print_exc()
+
+@check_roles_task.before_loop
+async def before_check_roles_task():
+    """Wait until the bot is connected before the first check runs."""
+    await bot.wait_until_ready()
+
 @bot.event
 async def on_ready():
     """
@@ -349,9 +367,9 @@ async def on_ready():
     """
     print(f'Logged in as {bot.user}')
     print(f'Bot is ready and monitoring {len(CHANNEL_IDS)} channels')
-    while True:
-        schedule.run_pending()
-        await asyncio.sleep(1)
+    # on_ready can fire again on reconnect; don't start a second loop
+    if not check_roles_task.is_running():
+        check_roles_task.start()
 
 # Graceful shutdown handler
 import signal
@@ -364,9 +382,6 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
-
-# Schedule the job with configurable interval
-schedule.every(CHECK_INTERVAL_MINUTES).minutes.do(check_for_new_roles)
 
 # Save and load message tracking data
 def save_message_tracking():
