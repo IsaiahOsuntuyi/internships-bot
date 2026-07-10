@@ -210,18 +210,6 @@ class TestDiscordOperations:
 @pytest.mark.asyncio
 class TestRoleChecking:
     """Test suite for role checking and update detection"""
-    
-    @pytest.fixture(autouse=True)
-    async def setup(self):
-        """Setup fixture for role checking tests with mocked bot and event loop"""
-        mock_bot = AsyncMock()
-        mock_loop = AsyncMock()
-        mock_loop.create_task = AsyncMock()
-        mock_bot.loop = mock_loop
-        
-        with patch('mainbot.bot', mock_bot), \
-             patch('asyncio.get_event_loop', return_value=mock_loop):
-            yield mock_bot
 
     async def test_check_for_new_roles(self):
         """Test detection and handling of new job roles"""
