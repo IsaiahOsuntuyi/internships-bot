@@ -74,8 +74,8 @@ Sends a message to a Discord channel identified by the provided channel ID, hand
 
 ### `on_ready()`
 
-Prints a message when the bot is logged in and then continuously runs a schedule while sleeping for 1 second in between.
+Prints a message when the bot is logged in and starts the periodic role check task.
 
 ## Scheduling
 
-The bot uses the `schedule` library to check for new roles every minute. This can be adjusted by modifying the scheduling interval in the `mainbot.py` file.
+The bot uses discord.py's `tasks` extension to check for new roles every minute by default. The interval can be adjusted with the `CHECK_INTERVAL_MINUTES` environment variable. If a check fails (e.g., a network error while pulling the repository), the error is logged and the bot simply retries at the next interval.

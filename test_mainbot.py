@@ -27,6 +27,8 @@ with patch.dict(os.environ, {
         validate_config,
         save_message_tracking,
         load_message_tracking,
+        on_ready,
+        check_roles_task,
         failed_channels,
         JSON_FILE_PATH,
         bot,
@@ -602,26 +604,44 @@ class TestEdgeCases:
             mock_file.assert_called_with('previous_data.json', 'w')
 
 class TestBotEventHandlers:
-    """Test suite for Discord bot event handlers"""
-    
+    """Test suite for Discord bot event handlers and the periodic check task"""
+
     @pytest.mark.asyncio
-    async def test_on_ready_event(self):
-        """Test the on_ready event handler behavior"""
-        # Test the logic that would be in on_ready without actually calling it
-        with patch('schedule.run_pending') as mock_schedule, \
-             patch('asyncio.sleep') as mock_sleep:
-            
-            # Simulate what on_ready does
-            mock_user = "TestBot#1234"
-            print(f'Logged in as {mock_user}')
-            print(f'Bot is ready and monitoring {len(["123", "456"])} channels')
-            
-            # Simulate one iteration of the event loop
-            mock_schedule()
-            await mock_sleep(1)
-            
-            mock_schedule.assert_called_once()
-            mock_sleep.assert_called_once_with(1)
+    async def test_on_ready_starts_check_loop(self):
+        """Test that on_ready starts the periodic role check task"""
+        with patch('mainbot.bot'), \
+             patch('mainbot.check_roles_task') as mock_task:
+            mock_task.is_running.return_value = False
+
+            await on_ready()
+
+            mock_task.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_on_ready_does_not_restart_running_loop(self):
+        """Test that on_ready on reconnect does not start a second loop"""
+        with patch('mainbot.bot'), \
+             patch('mainbot.check_roles_task') as mock_task:
+            mock_task.is_running.return_value = True
+
+            await on_ready()
+
+            mock_task.start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_check_roles_task_runs_check(self):
+        """Test that the periodic task calls check_for_new_roles"""
+        with patch('mainbot.check_for_new_roles') as mock_check:
+            await check_roles_task.coro()
+
+            mock_check.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_check_roles_task_survives_exceptions(self):
+        """Test that a failing check does not propagate and kill the loop"""
+        with patch('mainbot.check_for_new_roles', side_effect=Exception("git pull failed")):
+            # Must not raise — an escaping exception would stop the task loop
+            await check_roles_task.coro()
 
 class TestMainFunction:
     """Test suite for main function and startup"""
