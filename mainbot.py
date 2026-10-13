@@ -59,8 +59,7 @@ def validate_config():
 validate_config()
 
 # Constants from environment variables
-REPO_URL = os.getenv('REPO_URL', 'https://github.com/cvrve/Summer2027-Internships')
-LOCAL_REPO_PATH = os.getenv('LOCAL_REPO_PATH', 'Summer2027-Internships')
+REPO_URL = os.getenv('REPO_URL', 'https://github.com/SimplifyJobs/Summer2027-Internships')
 JSON_FILE_PATH = os.path.join(LOCAL_REPO_PATH, '.github', 'scripts', 'listings.json')
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_IDS = [id.strip() for id in os.getenv('CHANNEL_IDS').split(',')]
