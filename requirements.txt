@@ -1,6 +1,6 @@
 discord.py==2.4.0
 GitPython==3.1.43
-aiohttp==3.9.5
+aiohttp==3.10.5
 attrs==23.2.0
 gitdb==4.0.11
 smmap==5.0.1
