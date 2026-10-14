@@ -4,6 +4,7 @@ import json
 import asyncio
 import traceback
 import signal
+from datetime import datetime
 import discord
 from discord.ext import tasks, commands
 from aiohttp import web
@@ -19,8 +20,6 @@ LOCAL_REPO_PATH = os.getenv('LOCAL_REPO_PATH', './Summer2027-Internships')
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-message_tracking = {}
 
 async def clone_or_update_repo():
     """Clones or updates the repository asynchronously with depth=1 for speed."""
@@ -42,39 +41,41 @@ async def clone_or_update_repo():
             print("Repository cloned.", flush=True)
 
     await asyncio.to_thread(_sync_clone_or_update)
-    
+
 def load_listings():
     """Loads listings from the cloned JSON file."""
-    json_path = os.path.join(LOCAL_REPO_PATH, '.github', 'scripts', 'listings.json')
-    if os.path.exists(json_path):
-        with open(json_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-    # Fallback search if path changes
     for root, dirs, files in os.walk(LOCAL_REPO_PATH):
         for file in files:
             if file.endswith('.json') and 'listing' in file.lower():
                 target = os.path.join(root, file)
                 with open(target, 'r', encoding='utf-8') as f:
                     return json.load(f)
-
-    print(f"File not found: {json_path}", flush=True)
+    print("WARNING: No listing JSON file found!", flush=True)
     return []
 
 def load_previous_data():
-    """Loads previously saved listings to check for changes."""
     if os.path.exists('previous_data.json'):
         with open('previous_data.json', 'r', encoding='utf-8') as f:
             return json.load(f)
     return []
 
 def save_previous_data(data):
-    """Saves current listings to track future updates."""
     with open('previous_data.json', 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4)
 
-async def send_messages_to_channels(embeds, view=None):
-    """Sends embeds to configured channels."""
+def format_date(timestamp):
+    """Converts a millisecond epoch timestamp into a clean readable date string."""
+    try:
+        if isinstance(timestamp, (int, float)):
+            # Convert milliseconds to seconds
+            return datetime.fromtimestamp(timestamp / 1000.0).strftime('%B %d, %Y')
+        elif isinstance(timestamp, str) and timestamp.isdigit():
+            return datetime.fromtimestamp(int(timestamp) / 1000.0).strftime('%B %d, %Y')
+        return str(timestamp) if timestamp else "Recently"
+    except Exception:
+        return "Recently"
+
+async def send_messages_to_channels(embeds):
     for channel_id in CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
         if channel is None:
@@ -86,13 +87,12 @@ async def send_messages_to_channels(embeds, view=None):
         if channel:
             for embed in embeds:
                 try:
-                    await channel.send(embed=embed, view=view)
+                    await channel.send(embed=embed)
                     print(f"Sent message to channel {channel_id}", flush=True)
                 except Exception as e:
                     print(f"Error sending message to channel {channel_id}: {e}", flush=True)
 
 async def check_for_new_roles():
-    """Main task logic to check repository updates and post new roles."""
     print("Checking for new roles...", flush=True)
     await clone_or_update_repo()
     current_listings = load_listings()
@@ -116,15 +116,26 @@ async def check_for_new_roles():
     if roles_to_post:
         print(f"Posting {len(roles_to_post)} roles...", flush=True)
         for role in roles_to_post:
-            locations_raw = role.get('locations', ['N/A'])
+            company = role.get('company_name', 'Unknown Company')
+            title = role.get('title', 'Internship Role')
+            url = role.get('url', '#')
+            
+            locations_raw = role.get('locations', ['Remote / Multiple'])
             locations_str = ", ".join(locations_raw) if isinstance(locations_raw, list) else str(locations_raw)
+            
+            raw_date = role.get('date_posted') or role.get('date')
+            formatted_date = format_date(raw_date)
+
+            # Polished Embed Structure
             embed = discord.Embed(
-                title=f"{role.get('company_name', 'Unknown')} - {role.get('title', 'Unknown')}",
-                url=role.get('url', ''),
-                color=discord.Color.blue()
+                title=f"🚀 {company} — {title}",
+                url=url,
+                color=discord.Color.from_rgb(41, 128, 185) # Professional Blue
             )
-            embed.add_field(name="Location", value=locations_str or "N/A", inline=True)
-            embed.add_field(name="Date Posted", value=str(role.get('date_posted', 'N/A')), inline=True)
+            embed.add_field(name="📍 Location", value=locations_str or "N/A", inline=True)
+            embed.add_field(name="📅 Date Posted", value=formatted_date, inline=True)
+            embed.set_footer(text="Bit Brothers Internships Bot • Powered by Simplify")
+
             await send_messages_to_channels([embed])
             await asyncio.sleep(1.2)
 
@@ -147,11 +158,11 @@ async def on_ready():
 
 @bot.command(name='check')
 async def manual_check(ctx):
-    await ctx.send("Running manual check...")
+    await ctx.send("🔍 Running manual internship check...")
     if os.path.exists('previous_data.json'):
         os.remove('previous_data.json')
     await check_for_new_roles()
-    await ctx.send("Manual check completed!")
+    await ctx.send("✅ Manual check completed!")
 
 async def handle_health_check(request):
     return web.Response(text="Bot is running!")
