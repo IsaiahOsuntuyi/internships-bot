@@ -23,7 +23,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 message_tracking = {}
 
 async def clone_or_update_repo():
-    """Clones or updates the repository asynchronously without blocking the event loop."""
+    """Clones or updates the repository asynchronously with depth=1 for speed."""
     print("Cloning or updating repository...", flush=True)
     def _sync_clone_or_update():
         if os.path.exists(LOCAL_REPO_PATH):
@@ -35,14 +35,14 @@ async def clone_or_update_repo():
                 print(f"Error updating repo, re-cloning: {e}", flush=True)
                 import shutil
                 shutil.rmtree(LOCAL_REPO_PATH, ignore_errors=True)
-                git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH)
+                git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH, depth=1)
                 print("Repository cloned after error.", flush=True)
         else:
-            git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH)
+            git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH, depth=1)
             print("Repository cloned.", flush=True)
 
     await asyncio.to_thread(_sync_clone_or_update)
-
+    
 def load_listings():
     """Loads listings from the cloned JSON file."""
     json_path = os.path.join(LOCAL_REPO_PATH, '.github', 'scripts', 'listings.json')
