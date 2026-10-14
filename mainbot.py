@@ -10,7 +10,7 @@ from aiohttp import web
 import git
 
 # Configuration from environment variables
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN') or '').strip().strip('"').strip("'")
+DISCORD_TOKEN = (os.getenv('DISCORD_TOKEN') or '').strip().strip('"').strip("'")
 CHANNEL_IDS = [int(cid.strip()) for cid in os.getenv('CHANNEL_IDS', '').split(',') if cid.strip()]
 CHECK_INTERVAL_MINUTES = int(os.getenv('CHECK_INTERVAL_MINUTES', '360'))
 REPO_URL = os.getenv('REPO_URL', 'https://github.com/SimplifyJobs/Summer2027-Internships.git')
@@ -34,7 +34,7 @@ async def clone_or_update_repo():
             except Exception as e:
                 print(f"Error updating repo, re-cloning: {e}", flush=True)
                 import shutil
-                shutil.rmtree(LOCAL_REPO_PATH)
+                shutil.rmtree(LOCAL_REPO_PATH, ignore_errors=True)
                 git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH)
                 print("Repository cloned after error.", flush=True)
         else:
@@ -46,11 +46,20 @@ async def clone_or_update_repo():
 def load_listings():
     """Loads listings from the cloned JSON file."""
     json_path = os.path.join(LOCAL_REPO_PATH, '.github', 'scripts', 'listings.json')
-    if not os.path.exists(json_path):
-        print(f"File not found: {json_path}", flush=True)
-        return []
-    with open(json_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    if os.path.exists(json_path):
+        with open(json_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    # Fallback search if path changes
+    for root, dirs, files in os.walk(LOCAL_REPO_PATH):
+        for file in files:
+            if file.endswith('.json') and 'listing' in file.lower():
+                target = os.path.join(root, file)
+                with open(target, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+
+    print(f"File not found: {json_path}", flush=True)
+    return []
 
 def load_previous_data():
     """Loads previously saved listings to check for changes."""
@@ -74,11 +83,10 @@ async def send_messages_to_channels(embeds, view=None):
             except Exception as e:
                 print(f"Error fetching channel {channel_id}: {e}", flush=True)
                 continue
-
         if channel:
             for embed in embeds:
                 try:
-                    msg = await channel.send(embed=embed, view=view)
+                    await channel.send(embed=embed, view=view)
                     print(f"Sent message to channel {channel_id}", flush=True)
                 except Exception as e:
                     print(f"Error sending message to channel {channel_id}: {e}", flush=True)
@@ -93,10 +101,8 @@ async def check_for_new_roles():
     print(f"Loaded {len(current_listings)} total entries from JSON.", flush=True)
 
     is_first_run = not previous_listings
-
-    # Filter for active roles
     active_listings = [item for item in current_listings if item.get('active', True)]
-    
+
     if is_first_run:
         new_roles = active_listings
     else:
@@ -110,15 +116,17 @@ async def check_for_new_roles():
     if roles_to_post:
         print(f"Posting {len(roles_to_post)} roles...", flush=True)
         for role in roles_to_post:
+            locations_raw = role.get('locations', ['N/A'])
+            locations_str = ", ".join(locations_raw) if isinstance(locations_raw, list) else str(locations_raw)
             embed = discord.Embed(
                 title=f"{role.get('company_name', 'Unknown')} - {role.get('title', 'Unknown')}",
                 url=role.get('url', ''),
                 color=discord.Color.blue()
             )
-            embed.add_field(name="Location", value=", ".join(role.get('locations', ['N/A'])), inline=True)
-            embed.add_field(name="Date Posted", value=role.get('date_posted', 'N/A'), inline=True)
+            embed.add_field(name="Location", value=locations_str or "N/A", inline=True)
+            embed.add_field(name="Date Posted", value=str(role.get('date_posted', 'N/A')), inline=True)
             await send_messages_to_channels([embed])
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.2)
 
     save_previous_data(current_listings)
     print("Check completed.", flush=True)
@@ -159,8 +167,8 @@ async def start_web_server():
     print(f"Web server running on port {port}", flush=True)
 
 async def main():
+    await start_web_server()
     async with bot:
-        await start_web_server()
         await bot.start(DISCORD_TOKEN)
 
 if __name__ == '__main__':
