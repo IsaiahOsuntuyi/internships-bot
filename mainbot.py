@@ -100,20 +100,34 @@ async def check_for_new_roles():
     print(f"Loaded {len(current_listings)} total entries from JSON.", flush=True)
 
     is_first_run = not previous_listings
-    active_listings = [item for item in current_listings if item.get('active', True)]
+    
+    # STRICT RELEVANCE FILTER: Only consider roles where 'active' is explicitly True and 'is_visible' is True
+    active_listings = [
+        item for item in current_listings 
+        if item.get('active', True) and item.get('is_visible', True)
+    ]
 
     if is_first_run:
+        # On first run, we save the baseline data so we don't spam thousands of historical roles, 
+        # and post only the top 5 newest active roles as a test.
         new_roles = active_listings
     else:
+        # Build a set of unique identifiers (Company + Title) from previous check
         prev_ids = {f"{item.get('company_name')}-{item.get('title')}" for item in previous_listings}
-        new_roles = [item for item in active_listings if f"{item.get('company_name')}-{item.get('title')}" not in prev_ids]
+        
+        # Find listings that are currently active AND weren't in our previous snapshot
+        new_roles = [
+            item for item in active_listings 
+            if f"{item.get('company_name')}-{item.get('title')}" not in prev_ids
+        ]
 
-    print(f"Found {len(new_roles)} active new roles.", flush=True)
+    print(f"Found {len(new_roles)} truly active new roles to evaluate.", flush=True)
 
+    # Post top 5 on first run, or all new active roles on subsequent checks
     roles_to_post = new_roles[:5] if is_first_run else new_roles
 
     if roles_to_post:
-        print(f"Posting {len(roles_to_post)} roles...", flush=True)
+        print(f"Posting {len(roles_to_post)} open roles...", flush=True)
         for role in roles_to_post:
             company = role.get('company_name', 'Unknown Company')
             title = role.get('title', 'Internship Role')
@@ -138,6 +152,7 @@ async def check_for_new_roles():
             await send_messages_to_channels([embed])
             await asyncio.sleep(1.2)
 
+    # Save the current listings snapshot so future runs can compare against it
     save_previous_data(current_listings)
     print("Check completed.", flush=True)
 
