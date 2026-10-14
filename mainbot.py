@@ -24,188 +24,143 @@ message_tracking = {}
 
 async def clone_or_update_repo():
     """Clones or updates the repository asynchronously without blocking the event loop."""
-    print("Cloning or updating repository...")
+    print("Cloning or updating repository...", flush=True)
     def _sync_clone_or_update():
         if os.path.exists(LOCAL_REPO_PATH):
             try:
                 repo = git.Repo(LOCAL_REPO_PATH)
                 repo.remotes.origin.pull()
-                print("Repository updated.")
-            except git.exc.InvalidGitRepositoryError:
+                print("Repository updated.", flush=True)
+            except Exception as e:
+                print(f"Error updating repo, re-cloning: {e}", flush=True)
                 import shutil
-                shutil.rmtree(LOCAL_REPO_PATH, ignore_errors=True)
+                shutil.rmtree(LOCAL_REPO_PATH)
                 git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH)
-                print("Repository cloned fresh.")
+                print("Repository cloned after error.", flush=True)
         else:
             git.Repo.clone_from(REPO_URL, LOCAL_REPO_PATH)
-            print("Repository cloned fresh.")
+            print("Repository cloned.", flush=True)
 
     await asyncio.to_thread(_sync_clone_or_update)
 
-def read_json():
-    """Reads role data from the cloned JSON file structure."""
-    target_file = None
-    for root, dirs, files in os.walk(LOCAL_REPO_PATH):
-        for file in files:
-            if file.endswith('.json') and 'listing' in file.lower():
-                target_file = os.path.join(root, file)
-                break
-        if target_file:
-            break
+def load_listings():
+    """Loads listings from the cloned JSON file."""
+    json_path = os.path.join(LOCAL_REPO_PATH, '.github', 'scripts', 'listings.json')
+    if not os.path.exists(json_path):
+        print(f"File not found: {json_path}", flush=True)
+        return []
+    with open(json_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
-    if not target_file:
-        for root, dirs, files in os.walk(LOCAL_REPO_PATH):
-            for file in files:
-                if file.endswith('.json'):
-                    target_file = os.path.join(root, file)
-                    break
-            if target_file:
-                break
-
-    if target_file and os.path.exists(target_file):
-        with open(target_file, 'r') as f:
+def load_previous_data():
+    """Loads previously saved listings to check for changes."""
+    if os.path.exists('previous_data.json'):
+        with open('previous_data.json', 'r', encoding='utf-8') as f:
             return json.load(f)
     return []
 
-def format_message(role):
-    return (
-        f"**New Internship Opportunity!**\n"
-        f"**Company:** {role.get('company_name')}\n"
-        f"**Role:** {role.get('title')}\n"
-        f"[Apply Here]({role.get('url', '#')})"
-    )
+def save_previous_data(data):
+    """Saves current listings to track future updates."""
+    with open('previous_data.json', 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
 
-def format_deactivation_message(role):
-    return f"❌ **Expired/Closed:** {role.get('company_name')} - {role.get('title')}"
-
-async def send_messages_to_channels(message, role_key=None):
+async def send_messages_to_channels(embeds, view=None):
+    """Sends embeds to configured channels."""
     for channel_id in CHANNEL_IDS:
         channel = bot.get_channel(channel_id)
-        if channel:
+        if channel is None:
             try:
-                msg = await channel.send(message)
-                if role_key:
-                    if role_key not in message_tracking:
-                        message_tracking[role_key] = []
-                    message_tracking[role_key].append({
-                        'channel_id': channel_id,
-                        'message_id': msg.id,
-                        'timestamp': str(msg.created_at)
-                    })
-                await asyncio.sleep(1.2)
+                channel = await bot.fetch_channel(channel_id)
             except Exception as e:
-                print(f"Failed to send message to channel {channel_id}: {e}")
+                print(f"Error fetching channel {channel_id}: {e}", flush=True)
+                continue
 
-async def update_expired_role_messages(role):
-    role_key = f"{role.get('company_name')}_{role.get('title')}"
-    if role_key in message_tracking:
-        for record in message_tracking[role_key]:
-            try:
-                channel = bot.get_channel(record['channel_id'])
-                if channel:
-                    msg = await channel.fetch_message(record['message_id'])
-                    await msg.edit(content=f"~~{msg.content}~~ *(Closed)*")
-            except Exception as e:
-                print(f"Could not edit message: {e}")
+        if channel:
+            for embed in embeds:
+                try:
+                    msg = await channel.send(embed=embed, view=view)
+                    print(f"Sent message to channel {channel_id}", flush=True)
+                except Exception as e:
+                    print(f"Error sending message to channel {channel_id}: {e}", flush=True)
 
 async def check_for_new_roles():
-    """Checks for new roles and deactivated roles asynchronously."""
-    print("Checking for new roles...")
+    """Main task logic to check repository updates and post new roles."""
+    print("Checking for new roles...", flush=True)
     await clone_or_update_repo()
-    new_data = read_json()
+    current_listings = load_listings()
+    previous_listings = load_previous_data()
 
-    is_first_run = not os.path.exists('previous_data.json')
-    if not is_first_run:
-        with open('previous_data.json', 'r') as file:
-            old_data = json.load(file)
-        print("Previous data loaded.")
+    print(f"Loaded {len(current_listings)} total entries from JSON.", flush=True)
+
+    is_first_run = not previous_listings
+
+    # Filter for active roles
+    active_listings = [item for item in current_listings if item.get('active', True)]
+    
+    if is_first_run:
+        new_roles = active_listings
     else:
-        old_data = []
-        print("No previous data found. First run detected.")
+        prev_ids = {f"{item.get('company_name')}-{item.get('title')}" for item in previous_listings}
+        new_roles = [item for item in active_listings if f"{item.get('company_name')}-{item.get('title')}" not in prev_ids]
 
-    new_roles = []
-    deactivated_roles = []
+    print(f"Found {len(new_roles)} active new roles.", flush=True)
 
-    old_roles_dict = {(role.get('title'), role.get('company_name')): role for role in old_data}
+    roles_to_post = new_roles[:5] if is_first_run else new_roles
 
-    for new_role in new_data:
-        old_role = old_roles_dict.get((new_role.get('title'), new_role.get('company_name')))
-        if old_role:
-            if old_role.get('active') and not new_role.get('active'):
-                deactivated_roles.append(new_role)
-        elif new_role.get('is_visible', True) and new_role.get('active', True):
-            new_roles.append(new_role)
+    if roles_to_post:
+        print(f"Posting {len(roles_to_post)} roles...", flush=True)
+        for role in roles_to_post:
+            embed = discord.Embed(
+                title=f"{role.get('company_name', 'Unknown')} - {role.get('title', 'Unknown')}",
+                url=role.get('url', ''),
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="Location", value=", ".join(role.get('locations', ['N/A'])), inline=True)
+            embed.add_field(name="Date Posted", value=role.get('date_posted', 'N/A'), inline=True)
+            await send_messages_to_channels([embed])
+            await asyncio.sleep(1)
 
-    # On first run, only post the 10 most recent roles so it doesn't spam hundreds of messages
-    roles_to_post = new_roles[-10:] if is_first_run else new_roles
-
-    for role in roles_to_post:
-        role_key = f"{role.get('company_name')}_{role.get('title')}"
-        message = format_message(role)
-        await send_messages_to_channels(message, role_key)
-
-    for role in deactivated_roles:
-        await update_expired_role_messages(role)
-        message = format_deactivation_message(role)
-        await send_messages_to_channels(message)
-
-    with open('previous_data.json', 'w') as file:
-        json.dump(new_data, file)
-    print("Updated previous data with new data.")
+    save_previous_data(current_listings)
+    print("Check completed.", flush=True)
 
 @tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
-async def check_roles_task():
-    try:
-        await check_for_new_roles()
-    except Exception as e:
-        print(f"Error during scheduled role check: {e}")
-        traceback.print_exc()
+async def scheduled_check():
+    await check_for_new_roles()
 
-@check_roles_task.before_loop
-async def before_check_roles_task():
-    """Wait until the bot is connected before the first check runs."""
+@scheduled_check.before_loop
+async def before_scheduled_check():
     await bot.wait_until_ready()
 
 @bot.event
 async def on_ready():
-    """Event handler for when the bot is ready and connected to Discord."""
-    print(f'Logged in as {bot.user}')
-    print(f'Bot is ready and monitoring {len(CHANNEL_IDS)} channels')
-    if not check_roles_task.is_running():
-        check_roles_task.start()
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
+    if not scheduled_check.is_running():
+        scheduled_check.start()
 
-# Lightweight web server for Render port binding
+@bot.command(name='check')
+async def manual_check(ctx):
+    await ctx.send("Running manual check...")
+    if os.path.exists('previous_data.json'):
+        os.remove('previous_data.json')
+    await check_for_new_roles()
+    await ctx.send("Manual check completed!")
+
 async def handle_health_check(request):
-    return web.Response(text="Internship Bot is alive and running!")
+    return web.Response(text="Bot is running!")
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle_health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv('PORT', 10000))
+    port = int(os.getenv('PORT', '10000'))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"Health check server bound to port {port}")
-
-# Graceful shutdown handler
-def signal_handler(sig, frame):
-    print("\nShutting down gracefully...")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+    print(f"Web server running on port {port}", flush=True)
 
 async def main():
-    if not DISCORD_TOKEN:
-        print("Error: DISCORD_TOKEN environment variable not set.")
-        sys.exit(1)
-    
-    # Start the dummy web server so Render detects an open port immediately
-    await start_web_server()
-    
-    # Start the Discord bot on the same async event loop
     async with bot:
+        await start_web_server()
         await bot.start(DISCORD_TOKEN)
 
 if __name__ == '__main__':
