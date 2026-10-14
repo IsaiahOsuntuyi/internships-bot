@@ -107,6 +107,9 @@ async def check_for_new_roles():
         if item.get('active', True) and item.get('is_visible', True)
     ]
 
+    # SORT BY DATE POSTED: Newest listings first (October 2026 and forward)
+    active_listings.sort(key=lambda x: x.get('date_posted', 0) or 0, reverse=True)
+
     if is_first_run:
         new_roles = active_listings
     else:
@@ -120,7 +123,7 @@ async def check_for_new_roles():
 
     print(f"Found {len(new_roles)} truly active new roles to evaluate.", flush=True)
 
-    # Post up to 10 roles per check (first run takes top 10, subsequent checks take up to 10 new ones)
+    # Post up to 10 newest roles per check
     roles_to_post = new_roles[:10] if is_first_run else new_roles[:10]
 
     if roles_to_post:
