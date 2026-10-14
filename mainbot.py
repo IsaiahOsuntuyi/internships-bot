@@ -64,13 +64,12 @@ def save_previous_data(data):
         json.dump(data, f, indent=4)
 
 def format_date(timestamp):
-    """Converts a millisecond epoch timestamp into a clean readable date string."""
+    """Converts a standard 10-digit Unix epoch timestamp (in seconds) into a clean readable date string."""
     try:
         if isinstance(timestamp, (int, float)):
-            # Convert milliseconds to seconds
-            return datetime.fromtimestamp(timestamp / 1000.0).strftime('%B %d, %Y')
+            return datetime.fromtimestamp(timestamp).strftime('%B %d, %Y')
         elif isinstance(timestamp, str) and timestamp.isdigit():
-            return datetime.fromtimestamp(int(timestamp) / 1000.0).strftime('%B %d, %Y')
+            return datetime.fromtimestamp(int(timestamp)).strftime('%B %d, %Y')
         return str(timestamp) if timestamp else "Recently"
     except Exception:
         return "Recently"
