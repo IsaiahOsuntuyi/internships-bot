@@ -108,23 +108,20 @@ async def check_for_new_roles():
     ]
 
     if is_first_run:
-        # On first run, we save the baseline data so we don't spam thousands of historical roles, 
-        # and post only the top 5 newest active roles as a test.
         new_roles = active_listings
     else:
-        # Build a set of unique identifiers (Company + Title) from previous check
-        prev_ids = {f"{item.get('company_name')}-{item.get('title')}" for item in previous_listings}
+        # Use Simplify's unique posting 'id' property to track seen listings and prevent duplicates
+        prev_ids = {item.get('id') for item in previous_listings if item.get('id')}
         
-        # Find listings that are currently active AND weren't in our previous snapshot
         new_roles = [
             item for item in active_listings 
-            if f"{item.get('company_name')}-{item.get('title')}" not in prev_ids
+            if item.get('id') and item.get('id') not in prev_ids
         ]
 
     print(f"Found {len(new_roles)} truly active new roles to evaluate.", flush=True)
 
-    # Post top 5 on first run, or all new active roles on subsequent checks
-    roles_to_post = new_roles[:5] if is_first_run else new_roles
+    # Post up to 10 roles per check (first run takes top 10, subsequent checks take up to 10 new ones)
+    roles_to_post = new_roles[:10] if is_first_run else new_roles[:10]
 
     if roles_to_post:
         print(f"Posting {len(roles_to_post)} open roles...", flush=True)
@@ -152,7 +149,6 @@ async def check_for_new_roles():
             await send_messages_to_channels([embed])
             await asyncio.sleep(1.2)
 
-    # Save the current listings snapshot so future runs can compare against it
     save_previous_data(current_listings)
     print("Check completed.", flush=True)
 
