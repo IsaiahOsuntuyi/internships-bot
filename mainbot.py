@@ -54,7 +54,6 @@ def read_json():
             break
 
     if not target_file:
-        # Look for any json file
         for root, dirs, files in os.walk(LOCAL_REPO_PATH):
             for file in files:
                 if file.endswith('.json'):
@@ -69,10 +68,145 @@ def read_json():
     return []
 
 def format_message(role):
-    return f"**New Internship Opportunity!**\n**Company:** {role.get('company_name')}\n**Role:** {role.get('title')}\n[Apply Here]({role.get('url', '#')})"
+    return (
+        f"**New Internship Opportunity!**\n"
+        f"**Company:** {role.get('company_name')}\n"
+        f"**Role:** {role.get('title')}\n"
+        f"[Apply Here]({role.get('url', '#')})"
+    )
 
 def format_deactivation_message(role):
     return f"❌ **Expired/Closed:** {role.get('company_name')} - {role.get('title')}"
 
 async def send_messages_to_channels(message, role_key=None):
     for channel_id in CHANNEL_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                msg = await channel.send(message)
+                if role_key:
+                    if role_key not in message_tracking:
+                        message_tracking[role_key] = []
+                    message_tracking[role_key].append({
+                        'channel_id': channel_id,
+                        'message_id': msg.id,
+                        'timestamp': str(msg.created_at)
+                    })
+                await asyncio.sleep(1.2)
+            except Exception as e:
+                print(f"Failed to send message to channel {channel_id}: {e}")
+
+async def update_expired_role_messages(role):
+    role_key = f"{role.get('company_name')}_{role.get('title')}"
+    if role_key in message_tracking:
+        for record in message_tracking[role_key]:
+            try:
+                channel = bot.get_channel(record['channel_id'])
+                if channel:
+                    msg = await channel.fetch_message(record['message_id'])
+                    await msg.edit(content=f"~~{msg.content}~~ *(Closed)*")
+            except Exception as e:
+                print(f"Could not edit message: {e}")
+
+async def check_for_new_roles():
+    """Checks for new roles and deactivated roles asynchronously."""
+    print("Checking for new roles...")
+    await clone_or_update_repo()
+    new_data = read_json()
+
+    is_first_run = not os.path.exists('previous_data.json')
+    if not is_first_run:
+        with open('previous_data.json', 'r') as file:
+            old_data = json.load(file)
+        print("Previous data loaded.")
+    else:
+        old_data = []
+        print("No previous data found. First run detected.")
+
+    new_roles = []
+    deactivated_roles = []
+
+    old_roles_dict = {(role.get('title'), role.get('company_name')): role for role in old_data}
+
+    for new_role in new_data:
+        old_role = old_roles_dict.get((new_role.get('title'), new_role.get('company_name')))
+        if old_role:
+            if old_role.get('active') and not new_role.get('active'):
+                deactivated_roles.append(new_role)
+        elif new_role.get('is_visible', True) and new_role.get('active', True):
+            new_roles.append(new_role)
+
+    # On first run, only post the 10 most recent roles so it doesn't spam hundreds of messages
+    roles_to_post = new_roles[-10:] if is_first_run else new_roles
+
+    for role in roles_to_post:
+        role_key = f"{role.get('company_name')}_{role.get('title')}"
+        message = format_message(role)
+        await send_messages_to_channels(message, role_key)
+
+    for role in deactivated_roles:
+        await update_expired_role_messages(role)
+        message = format_deactivation_message(role)
+        await send_messages_to_channels(message)
+
+    with open('previous_data.json', 'w') as file:
+        json.dump(new_data, file)
+    print("Updated previous data with new data.")
+
+@tasks.loop(minutes=CHECK_INTERVAL_MINUTES)
+async def check_roles_task():
+    try:
+        await check_for_new_roles()
+    except Exception as e:
+        print(f"Error during scheduled role check: {e}")
+        traceback.print_exc()
+
+@check_roles_task.before_loop
+async def before_check_roles_task():
+    """Wait until the bot is connected before the first check runs."""
+    await bot.wait_until_ready()
+
+@bot.event
+async def on_ready():
+    """Event handler for when the bot is ready and connected to Discord."""
+    print(f'Logged in as {bot.user}')
+    print(f'Bot is ready and monitoring {len(CHANNEL_IDS)} channels')
+    if not check_roles_task.is_running():
+        check_roles_task.start()
+
+# Lightweight web server for Render port binding
+async def handle_health_check(request):
+    return web.Response(text="Internship Bot is alive and running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv('PORT', 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"Health check server bound to port {port}")
+
+# Graceful shutdown handler
+def signal_handler(sig, frame):
+    print("\nShutting down gracefully...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+async def main():
+    if not DISCORD_TOKEN:
+        print("Error: DISCORD_TOKEN environment variable not set.")
+        sys.exit(1)
+    
+    # Start the dummy web server so Render detects an open port immediately
+    await start_web_server()
+    
+    # Start the Discord bot on the same async event loop
+    async with bot:
+        await bot.start(DISCORD_TOKEN)
+
+if __name__ == '__main__':
+    asyncio.run(main())
