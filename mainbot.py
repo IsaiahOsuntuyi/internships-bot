@@ -91,6 +91,41 @@ async def send_messages_to_channels(embeds):
                 except Exception as e:
                     print(f"Error sending message to channel {channel_id}: {e}", flush=True)
 
+US_STATES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", 
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", 
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", 
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", 
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC"
+}
+
+EXCLUDED_LOCATIONS = [
+    "canada", "uk", "united kingdom", "london", "toronto", "vancouver",
+    "montreal", "waterloo", "ontario", "british columbia", "alberta", 
+    "quebec", "ottawa", "calgary", "india", "germany", "australia", 
+    "singapore", "mexico", "brazil", "ireland", "dublin", "poland", 
+    "spain", "france", "netherlands", "switzerland", "israel", "china", 
+    "japan", "hong kong", "taiwan", "emea", "apac", "latam"
+]
+
+def is_us_location(loc: str) -> bool:
+    loc_lower = str(loc).lower().strip()
+    if any(excl in loc_lower for excl in EXCLUDED_LOCATIONS):
+        return False
+    tokens = [t.strip() for t in str(loc).replace(",", " ").replace("/", " ").split()]
+    if any(token in US_STATES for token in tokens):
+        return True
+    return any(k in loc_lower for k in ["united states", "usa", "u.s.", "remote"])
+
+def has_us_location(locations) -> bool:
+    if not locations:
+        return False
+    if isinstance(locations, str):
+        return is_us_location(locations)
+    if isinstance(locations, list):
+        return any(is_us_location(loc) for loc in locations)
+    return False
+
 async def check_for_new_roles():
     print("Checking for new roles...", flush=True)
     await clone_or_update_repo()
@@ -100,11 +135,13 @@ async def check_for_new_roles():
     print(f"Loaded {len(current_listings)} total entries from JSON.", flush=True)
 
     is_first_run = not previous_listings
-    
-    # STRICT RELEVANCE FILTER: Only consider roles where 'active' is explicitly True and 'is_visible' is True
+
+    # STRICT RELEVANCE FILTER: Only consider active, visible, US-based roles
     active_listings = [
         item for item in current_listings 
-        if item.get('active', True) and item.get('is_visible', True)
+        if item.get('active', True) 
+        and item.get('is_visible', True)
+        and has_us_location(item.get('locations', []))
     ]
 
     # SORT BY DATE POSTED: Newest listings first (October 2026 and forward)
@@ -115,11 +152,7 @@ async def check_for_new_roles():
     else:
         # Use Simplify's unique posting 'id' property to track seen listings and prevent duplicates
         prev_ids = {item.get('id') for item in previous_listings if item.get('id')}
-        
-        new_roles = [
-            item for item in active_listings 
-            if item.get('id') and item.get('id') not in prev_ids
-        ]
+        new_roles = [item for item in active_listings if item.get('id') and item.get('id') not in prev_ids]
 
     print(f"Found {len(new_roles)} truly active new roles to evaluate.", flush=True)
 
@@ -132,13 +165,13 @@ async def check_for_new_roles():
             company = role.get('company_name', 'Unknown Company')
             title = role.get('title', 'Internship Role')
             url = role.get('url', '#')
-            
             locations_raw = role.get('locations', ['Remote / Multiple'])
-            locations_str = ", ".join(locations_raw) if isinstance(locations_raw, list) else str(locations_raw)
-            
-            raw_date = role.get('date_posted') or role.get('date')
-            formatted_date = format_date(raw_date)
-
+            if isinstance(locations_raw, list):
+                us_locs = [loc for loc in locations_raw if is_us_location(loc)]
+                locations_str = ", ".join(us_locs) if us_locs else ", ".join(locations_raw)
+            else:
+                locations_str = str(locations_raw)
+            formatted_date = format_date(role.get('date_posted'))    
             # Polished Embed Structure
             embed = discord.Embed(
                 title=f"🚀 {company} — {title}",
